@@ -1,0 +1,8 @@
+# Chinese Chess AI - 依赖清单
+# 生成于: 2026-05-16
+# 来源: app/doubao/cchess_doubao_deepseek_v1.py, app/doubao/cchess_doubao_deepseek_v1_play.py
+
+numpy==1.26.4
+torch==2.2.2
+tqdm==4.67.3
+pygame==2.6.1

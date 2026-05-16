@@ -1,0 +1,41 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "当前Python文件",
+            "type": "debugpy",
+            "request": "launch",
+            // ✅ 核心修改：调试【当前打开/激活的文件】
+            "program": "${file}",
+            "python": "${command:python.interpreterPath}",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/app",
+                "PYTHON_LINTING_ENABLED": "false"
+            },
+            "skipFiles": [
+                "<python>*/site-packages/**"
+            ]
+        },
+        {
+            "name": "调试chess_llm",
+            "type": "debugpy",
+            "request": "launch",
+            // ✅ 核心修改：调试【当前打开/激活的文件】
+            "program": "${file}",
+            "python": "${command:python.interpreterPath}",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/app/chess_llm",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/app/chess_llm",
+                "PYTHON_LINTING_ENABLED": "false"
+            },
+            "skipFiles": [
+                "<python>*/site-packages/**"
+            ]
+        }
+    ]
+}
