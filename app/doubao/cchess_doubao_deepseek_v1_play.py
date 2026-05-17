@@ -52,7 +52,7 @@ CELL_SIZE = 60
 BOARD_PADDING = 60  # 棋盘四周留白，避免棋子被裁剪
 BOARD_WIDTH = 8 * CELL_SIZE  # 9个交叉点之间的总宽度
 BOARD_HEIGHT = 9 * CELL_SIZE  # 10个交叉点之间的总高度
-WINDOW_WIDTH = BOARD_WIDTH + BOARD_PADDING * 2 + 220
+WINDOW_WIDTH = BOARD_WIDTH + BOARD_PADDING * 2 + 260
 WINDOW_HEIGHT = BOARD_HEIGHT + BOARD_PADDING * 2
 # 颜色
 BG_COLOR = (245, 222, 179)
@@ -78,6 +78,29 @@ mouse_x, mouse_y = 0, 0
 GAME_OVER = False
 WINNER_MSG = ""
 GAME_OVER_COLOR = BLACK_CHESS
+# 游戏结束按钮区域（在 draw_graphic_board 中赋值，供事件处理用）
+BTN_RESTART_RECT = None
+BTN_QUIT_RECT = None
+
+# ===================== 走法历史记录 =====================
+move_history = []  # [(红方走法str, 黑方走法str or None), ...]
+pending_red_move = None  # 当前轮红方已走、黑方未走的走法
+scroll_offset = 0  # 历史面板垂直滚动偏移(像素)
+HIST_X = BOARD_WIDTH + BOARD_PADDING * 2 + 20  # 面板左边界
+HIST_TOP = 210  # 面板顶部(y坐标)
+HIST_WIDTH = 200  # 面板宽度
+HIST_LINE_H = 28  # 每行高度
+HIST_VISIBLE_H = WINDOW_HEIGHT - HIST_TOP - 20  # 面板可视高度
+
+
+# ── 工具：格式化为显示用走法 ──
+def fmt_move(fc, fr, tc, tr, piece_id, turn):
+    """将走法格式化为 '红车: C7-C5' 样式（显示行号=9-fr）"""
+    col_map_rev = {v: k for k, v in COL_MAP.items()}
+    side = "红" if turn == 0 else "黑"
+    name = CHESS_TEXT.get(piece_id, "?")
+    return f"{side}{name}: {col_map_rev[fc]}{9-fr}-{col_map_rev[tc]}{9-tr}"
+
 
 # ===================== 棋子中文映射表 =====================
 CHESS_TEXT = {
@@ -140,6 +163,10 @@ def get_all_legal_moves(board_arr, turn):
 
 def is_checkmate(board_arr, turn):
     """判断 turn 方是否被将死或困毙（无任何合法走法）"""
+    king = RED_K if turn == 0 else BLK_K
+    # 老将被吃了 → 直接判负
+    if king not in board_arr:
+        return True
     own = RED_PIECES if turn == 0 else BLK_PIECES
     for c in range(9):
         for r in range(10):
@@ -243,6 +270,7 @@ def ai_move(model, board):
 
 # ===================== 绘制棋盘 + 圆形棋子+居中中文 =====================
 def draw_graphic_board(board_obj):
+    global scroll_offset
     # 填充背景
     screen.fill(BG_COLOR)
 
@@ -438,6 +466,65 @@ def draw_graphic_board(board_obj):
         )
         y_pos += 40
 
+    # ── 绘制历史走法面板 ──
+    panel_font = (
+        pygame.freetype.Font("/System/Library/Fonts/STHeiti Light.ttc", 20)
+        if os.path.exists("/System/Library/Fonts/STHeiti Light.ttc")
+        else pygame.freetype.SysFont("stheitilight", 20)
+    )
+    # 面板背景
+    pygame.draw.rect(
+        screen, (230, 200, 160), (HIST_X, HIST_TOP, HIST_WIDTH, HIST_VISIBLE_H)
+    )
+    pygame.draw.rect(
+        screen, LINE_COLOR, (HIST_X, HIST_TOP, HIST_WIDTH, HIST_VISIBLE_H), 2
+    )
+    # 标题
+    title_font = (
+        pygame.freetype.Font("/System/Library/Fonts/STHeiti Light.ttc", 22)
+        if os.path.exists("/System/Library/Fonts/STHeiti Light.ttc")
+        else pygame.freetype.SysFont("stheitilight", 22)
+    )
+    title_font.render_to(screen, (HIST_X + 10, HIST_TOP + 4), "走法记录", LINE_COLOR)
+
+    # 计算内容总高度
+    display_lines = []  # (text, is_red)
+    for i, (r, b) in enumerate(move_history):
+        display_lines.append((f"{i+1}. {r}", True))
+        if b is not None:
+            display_lines.append((f"   {b}", False))
+    if pending_red_move is not None:
+        display_lines.append((f"{len(move_history)+1}. {pending_red_move}", True))
+
+    content_h = len(display_lines) * HIST_LINE_H
+    max_scroll = max(0, content_h - (HIST_VISIBLE_H - 32))
+    # 关键：把 scroll_offset 本身钳位到有效范围，否则 auto-scroll=99999 后滚不动
+    scroll_offset = max(0, min(scroll_offset, max_scroll))
+    scroll_offset_clamped = scroll_offset
+
+    # 绘制走法行
+    clip_rect = pygame.Rect(HIST_X, HIST_TOP + 32, HIST_WIDTH, HIST_VISIBLE_H - 32)
+    pygame.draw.rect(screen, (230, 200, 160), clip_rect)
+    pygame.draw.rect(screen, LINE_COLOR, clip_rect, 1)
+
+    for idx, (line, is_red) in enumerate(display_lines):
+        ly = HIST_TOP + 32 + idx * HIST_LINE_H - scroll_offset_clamped
+        if HIST_TOP + 32 <= ly < HIST_TOP + HIST_VISIBLE_H:
+            color = RED_CHESS if is_red else BLACK_CHESS
+            panel_font.render_to(screen, (HIST_X + 6, ly), line, color)
+
+    # 滚动条
+    if max_scroll > 0:
+        bar_h = max(20, (HIST_VISIBLE_H - 32) * (HIST_VISIBLE_H - 32) // content_h)
+        bar_y = (
+            HIST_TOP
+            + 32
+            + (scroll_offset_clamped / max_scroll) * ((HIST_VISIBLE_H - 32) - bar_h)
+        )
+        pygame.draw.rect(
+            screen, LINE_COLOR, (HIST_X + HIST_WIDTH - 10, int(bar_y), 8, int(bar_h))
+        )
+
     # 拖拽棋子跟随鼠标 - 仅新增
     if selected_col != -1:
         piece = board_obj.board[selected_col][selected_row]
@@ -454,13 +541,67 @@ def draw_graphic_board(board_obj):
             screen, (x - text_rect.width // 2, y - text_rect.height // 2), text, WHITE
         )
 
+    # ── 游戏结束遮罩 + 重新开始/退出按钮 ──
+    if GAME_OVER and WINNER_MSG:
+        global BTN_RESTART_RECT, BTN_QUIT_RECT
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 100))
+        screen.blit(overlay, (0, 0))
+
+        big_font = (
+            pygame.freetype.Font("/System/Library/Fonts/STHeiti Light.ttc", 48)
+            if os.path.exists("/System/Library/Fonts/STHeiti Light.ttc")
+            else pygame.freetype.SysFont("stheitilight", 48)
+        )
+        msg_rect = big_font.get_rect(WINNER_MSG)
+        cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2
+        big_font.render_to(
+            screen, (cx - msg_rect.width // 2, cy - 80), WINNER_MSG, GAME_OVER_COLOR
+        )
+
+        # 两个按钮
+        btn_w, btn_h = 160, 50
+        btn_gap = 30
+        total_w = btn_w * 2 + btn_gap
+        start_x = cx - total_w // 2
+        btn_y = cy + 10
+
+        BTN_RESTART_RECT = pygame.Rect(start_x, btn_y, btn_w, btn_h)
+        BTN_QUIT_RECT = pygame.Rect(start_x + btn_w + btn_gap, btn_y, btn_w, btn_h)
+
+        btn_font = (
+            pygame.freetype.Font("/System/Library/Fonts/STHeiti Light.ttc", 28)
+            if os.path.exists("/System/Library/Fonts/STHeiti Light.ttc")
+            else pygame.freetype.SysFont("stheitilight", 28)
+        )
+
+        for rect, label in [(BTN_RESTART_RECT, "重新开始"), (BTN_QUIT_RECT, "退出")]:
+            # 按钮背景
+            hov = rect.collidepoint(mouse_x, mouse_y)
+            btn_color = (200, 180, 140) if hov else (160, 140, 100)
+            pygame.draw.rect(screen, btn_color, rect)
+            pygame.draw.rect(screen, LINE_COLOR, rect, 3)
+            # 按钮文字
+            lbl_rect = btn_font.get_rect(label)
+            btn_font.render_to(
+                screen,
+                (
+                    rect.x + (rect.width - lbl_rect.width) // 2,
+                    rect.y + (rect.height - lbl_rect.height) // 2,
+                ),
+                label,
+                LINE_COLOR,
+            )
+
     pygame.display.update()
 
 
 # ===================== 人机对战主循环 - 仅替换命令行为鼠标，其余100%原样 =====================
-def play_game():
+def play_game(model=None):
     global selected_col, selected_row, legal_moves, mouse_x, mouse_y, GAME_OVER, WINNER_MSG, GAME_OVER_COLOR
-    model = load_trained_model()
+    global pending_red_move, scroll_offset
+    if model is None:
+        model = load_trained_model()
     board = XiangqiBoard()
     # 初始棋盘FEN（和训练一致）
     board.load_fen(
@@ -471,6 +612,9 @@ def play_game():
     print("鼠标操作：左键选子，左键落子，右键/ESC取消")
     GAME_OVER = False
     WINNER_MSG = ""
+    move_history.clear()
+    pending_red_move = None
+    scroll_offset = 0
     running = True
 
     while running:
@@ -488,19 +632,44 @@ def play_game():
             if event.type == pygame.MOUSEMOTION:
                 mouse_x, mouse_y = event.pos
 
-            # ESC取消选中（如果游戏结束则退出）
+            # 滚轮滚动历史面板（MOUSEWHEEL + MOUSEBUTTONDOWN 兜底）
+            if event.type == pygame.MOUSEWHEEL:
+                scroll_offset -= event.y * HIST_LINE_H * 2
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 4:  # 滚轮上
+                    scroll_offset -= HIST_LINE_H * 3
+                elif event.button == 5:  # 滚轮下
+                    scroll_offset += HIST_LINE_H * 3
+            # 键盘翻页
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    if GAME_OVER:
+                if event.key == pygame.K_PAGEUP:
+                    scroll_offset -= HIST_VISIBLE_H
+                elif event.key == pygame.K_PAGEDOWN:
+                    scroll_offset += HIST_VISIBLE_H
+
+            # 游戏结束：点击按钮或按 ESC
+            if GAME_OVER:
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    running = False
+                    pygame.quit()
+                    return
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = event.pos
+                    if BTN_RESTART_RECT and BTN_RESTART_RECT.collidepoint(mx, my):
+                        # 重新开始（复用已加载的模型）
+                        play_game(model)
+                        return
+                    if BTN_QUIT_RECT and BTN_QUIT_RECT.collidepoint(mx, my):
                         running = False
                         pygame.quit()
                         return
+                continue
+
+            # ESC取消选中
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
                     selected_col, selected_row = -1, -1
                     legal_moves = []
-
-            # 游戏结束后不再响应落子操作
-            if GAME_OVER:
-                continue
 
             # 鼠标点击事件
             if event.type == pygame.MOUSEBUTTONDOWN and board.turn == 0:
@@ -514,7 +683,7 @@ def play_game():
                 if event.button == 3:
                     selected_col, selected_row = -1, -1
                     legal_moves = []
-                
+
                 # 左键选子/落子
                 if event.button == 1:
                     if selected_col == -1:
@@ -525,11 +694,19 @@ def play_game():
                     else:
                         # 合法落点落子
                         if (col, row) in legal_moves:
+                            # 先读棋子ID再走子（push后源格变空）
+                            red_piece = board.board[selected_col, selected_row]
                             board.push((selected_col, selected_row, col, row))
+                            # 记录红方走法
+                            pending_red_move = fmt_move(
+                                selected_col, selected_row, col, row, red_piece, 0
+                            )
                             selected_col, selected_row = -1, -1
                             legal_moves = []
-                            # 落子后检查黑方（AI）是否被将死
-                            if is_checkmate(board.board, 1):
+                            # 自动滚动到底部（draw_graphic_board 会钳位到 max_scroll）
+                            scroll_offset = 10**9
+                            # 落子后检查黑方（AI）是否被将死 / 老将被吃
+                            if BLK_K not in board.board or is_checkmate(board.board, 1):
                                 GAME_OVER = True
                                 WINNER_MSG = "🎉 红方胜！你赢了！"
                                 GAME_OVER_COLOR = RED_CHESS
@@ -557,10 +734,18 @@ def play_game():
                 print("🎉 AI无合法走法，红方胜！")
                 continue
             col_map_rev = {v: k for k, v in COL_MAP.items()}
+            # 先读棋子ID再走子
+            black_piece = board.board[fc, fr]
+            black_str = fmt_move(fc, fr, tc, tr, black_piece, 1)
             print(f"AI走子：{col_map_rev[fc]}{fr} -> {col_map_rev[tc]}{tr}")
             board.push(move)
-            # AI走完后检查红方（人类）是否被将死
-            if is_checkmate(board.board, 0):
+            # 记录黑方走法（补齐当前轮）
+            move_history.append((pending_red_move, black_str))
+            pending_red_move = None
+            # 自动滚动到底部（draw_graphic_board 会钳位到 max_scroll）
+            scroll_offset = 10**9
+            # AI走完后检查红方（人类）是否被将死 / 老将被吃
+            if RED_K not in board.board or is_checkmate(board.board, 0):
                 GAME_OVER = True
                 WINNER_MSG = "😵 黑方胜！AI赢了..."
                 GAME_OVER_COLOR = BLACK_CHESS
@@ -568,6 +753,7 @@ def play_game():
 
         # 刷新棋盘（第二次刷新以显示AI走完的状态）
         draw_graphic_board(board)
+
 
 if __name__ == "__main__":
     play_game()
