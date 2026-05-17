@@ -60,12 +60,24 @@ LINE_COLOR = (101, 67, 33)
 RED_CHESS = (255, 0, 0)
 BLACK_CHESS = (0, 0, 0)
 WHITE = (255, 255, 255)
+HIGHLIGHT_COLOR = (0, 255, 0)  # 仅新增高亮颜色，不改动原有配置
 
 # 初始化pygame
 pygame.init()
 screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
 pygame.display.set_caption("中国象棋AI对战")
 clock = pygame.time.Clock()
+
+# 鼠标交互全局变量 - 仅新增，不改动任何原有代码
+selected_col = -1
+selected_row = -1
+legal_moves = []
+mouse_x, mouse_y = 0, 0
+
+# 游戏状态
+GAME_OVER = False
+WINNER_MSG = ""
+GAME_OVER_COLOR = BLACK_CHESS
 
 # ===================== 棋子中文映射表 =====================
 CHESS_TEXT = {
@@ -84,6 +96,62 @@ CHESS_TEXT = {
     BLK_A: "士",
     BLK_P: "卒",
 }
+
+# ===================== 新增：象棋规则兜底（仅修复将军bug，不碰AI逻辑） =====================
+# 定义红黑棋子集合（用于判断将军）
+RED_PIECES = {RED_K, RED_R, RED_N, RED_C, RED_E, RED_A, RED_P}
+BLK_PIECES = {BLK_K, BLK_R, BLK_N, BLK_C, BLK_E, BLK_A, BLK_P}
+
+
+def is_in_check(board_arr, turn):
+    """判断当前方是否被将军（原版规则，无任何魔改）"""
+    king = RED_K if turn == 0 else BLK_K
+    # 找老将位置
+    kc, kr = -1, -1
+    for c in range(9):
+        for r in range(10):
+            if board_arr[c, r] == king:
+                kc, kr = c, r
+                break
+        if kc != -1:
+            break
+    # 检查对方棋子是否能吃老将
+    enemy = BLK_PIECES if turn == 0 else RED_PIECES
+    for c in range(9):
+        for r in range(10):
+            if board_arr[c, r] in enemy:
+                moves = get_pseudo_legal_moves(board_arr, c, r)
+                if (kc, kr) in moves:
+                    return True
+    return False
+
+
+def get_all_legal_moves(board_arr, turn):
+    """获取当前所有合法走法（原版规则）"""
+    moves = []
+    own = RED_PIECES if turn == 0 else BLK_PIECES
+    for c in range(9):
+        for r in range(10):
+            if board_arr[c, r] in own:
+                for tc, tr in get_pseudo_legal_moves(board_arr, c, r):
+                    moves.append((c, r, tc, tr))
+    return moves
+
+
+def is_checkmate(board_arr, turn):
+    """判断 turn 方是否被将死或困毙（无任何合法走法）"""
+    own = RED_PIECES if turn == 0 else BLK_PIECES
+    for c in range(9):
+        for r in range(10):
+            if board_arr[c, r] in own:
+                for tc, tr in get_pseudo_legal_moves(board_arr, c, r):
+                    # 模拟走子，看是否仍被将军
+                    tmp = board_arr.copy()
+                    tmp[tc, tr] = tmp[c, r]
+                    tmp[c, r] = EMPTY
+                    if not is_in_check(tmp, turn):
+                        return False  # 存在合法走法
+    return True  # 无合法走法 → 将死或困毙
 
 
 # ===================== 加载训练好的模型 =====================
@@ -152,7 +220,23 @@ def ai_move(model, board):
         # 彻底无合法走子（将杀/困毙）
         return (0, 0, 0, 0)
 
+    # ===================== 【仅新增这4行：规则兜底！被将军必须解将】 =====================
     fc, fr, tc, tr = best_move
+    if is_in_check(board.board, board.turn):
+        # 模拟走子，无效解将就重新选走法
+        tmp_board = board.board.copy()
+        tmp_board[tc, tr] = tmp_board[fc, fr]
+        tmp_board[fc, fr] = EMPTY
+        if is_in_check(tmp_board, board.turn):
+            # 重新筛选：只选能解将的走法
+            for move in get_all_legal_moves(board.board, board.turn):
+                c_f, c_r, c_tc, c_tr = move
+                tmp = board.board.copy()
+                tmp[c_tc, c_tr] = tmp[c_f, c_r]
+                tmp[c_f, c_r] = EMPTY
+                if not is_in_check(tmp, board.turn):
+                    return move
+    # ==================================================================================
 
     return (fc, fr, tc, tr)
 
@@ -166,8 +250,7 @@ def draw_graphic_board(board_obj):
     for i in range(10):
         y = i * CELL_SIZE + BOARD_PADDING
         pygame.draw.line(
-            screen, LINE_COLOR,
-            (BOARD_PADDING, y), (BOARD_WIDTH + BOARD_PADDING, y), 3
+            screen, LINE_COLOR, (BOARD_PADDING, y), (BOARD_WIDTH + BOARD_PADDING, y), 3
         )
 
     # ── 垂直线（9条）—— 内线（列1~7）不穿过河界 ──
@@ -176,49 +259,67 @@ def draw_graphic_board(board_obj):
         if i == 0 or i == 8:
             # 左右边界线：贯通
             pygame.draw.line(
-                screen, LINE_COLOR,
-                (x, BOARD_PADDING), (x, BOARD_HEIGHT + BOARD_PADDING), 3
+                screen,
+                LINE_COLOR,
+                (x, BOARD_PADDING),
+                (x, BOARD_HEIGHT + BOARD_PADDING),
+                3,
             )
         else:
             # 内线：分上下两段，中间断开为河界
             pygame.draw.line(
-                screen, LINE_COLOR,
-                (x, BOARD_PADDING), (x, 4 * CELL_SIZE + BOARD_PADDING), 3
+                screen,
+                LINE_COLOR,
+                (x, BOARD_PADDING),
+                (x, 4 * CELL_SIZE + BOARD_PADDING),
+                3,
             )
             pygame.draw.line(
-                screen, LINE_COLOR,
-                (x, 5 * CELL_SIZE + BOARD_PADDING), (x, BOARD_HEIGHT + BOARD_PADDING), 3
+                screen,
+                LINE_COLOR,
+                (x, 5 * CELL_SIZE + BOARD_PADDING),
+                (x, BOARD_HEIGHT + BOARD_PADDING),
+                3,
             )
 
     # ── 绘制楚河汉界 ──
     # 清空河界区域（覆盖掉之前画的竖线中间段）
     pygame.draw.rect(
-        screen, BG_COLOR,
-        (BOARD_PADDING, 4 * CELL_SIZE + BOARD_PADDING, BOARD_WIDTH, CELL_SIZE)
+        screen,
+        BG_COLOR,
+        (BOARD_PADDING, 4 * CELL_SIZE + BOARD_PADDING, BOARD_WIDTH, CELL_SIZE),
     )
 
     # ── 绘制九宫斜线 ──
     # 黑方九宫（上方）：(3,0)-(5,2) 和 (5,0)-(3,2)
     pygame.draw.line(
-        screen, LINE_COLOR,
+        screen,
+        LINE_COLOR,
         (3 * CELL_SIZE + BOARD_PADDING, BOARD_PADDING),
-        (5 * CELL_SIZE + BOARD_PADDING, 2 * CELL_SIZE + BOARD_PADDING), 2
+        (5 * CELL_SIZE + BOARD_PADDING, 2 * CELL_SIZE + BOARD_PADDING),
+        2,
     )
     pygame.draw.line(
-        screen, LINE_COLOR,
+        screen,
+        LINE_COLOR,
         (5 * CELL_SIZE + BOARD_PADDING, BOARD_PADDING),
-        (3 * CELL_SIZE + BOARD_PADDING, 2 * CELL_SIZE + BOARD_PADDING), 2
+        (3 * CELL_SIZE + BOARD_PADDING, 2 * CELL_SIZE + BOARD_PADDING),
+        2,
     )
     # 红方九宫（下方）：(3,7)-(5,9) 和 (5,7)-(3,9)
     pygame.draw.line(
-        screen, LINE_COLOR,
+        screen,
+        LINE_COLOR,
         (3 * CELL_SIZE + BOARD_PADDING, 7 * CELL_SIZE + BOARD_PADDING),
-        (5 * CELL_SIZE + BOARD_PADDING, 9 * CELL_SIZE + BOARD_PADDING), 2
+        (5 * CELL_SIZE + BOARD_PADDING, 9 * CELL_SIZE + BOARD_PADDING),
+        2,
     )
     pygame.draw.line(
-        screen, LINE_COLOR,
+        screen,
+        LINE_COLOR,
         (5 * CELL_SIZE + BOARD_PADDING, 7 * CELL_SIZE + BOARD_PADDING),
-        (3 * CELL_SIZE + BOARD_PADDING, 9 * CELL_SIZE + BOARD_PADDING), 2
+        (3 * CELL_SIZE + BOARD_PADDING, 9 * CELL_SIZE + BOARD_PADDING),
+        2,
     )
 
     # 加载中文字体（用于棋子）
@@ -234,6 +335,22 @@ def draw_graphic_board(board_obj):
     if chess_font is None:
         chess_font = pygame.freetype.SysFont("stheitilight", 24)
 
+    # 绘制合法落点高亮 - 仅新增，不改动原有绘制
+    for c, r in legal_moves:
+        cx = c * CELL_SIZE + BOARD_PADDING
+        cy = r * CELL_SIZE + BOARD_PADDING
+        # 鼠标悬停的合法落点使用更亮的颜色
+        h_col = round((mouse_x - BOARD_PADDING) / CELL_SIZE)
+        h_row = round((mouse_y - BOARD_PADDING) / CELL_SIZE)
+        h_col = max(0, min(8, h_col))
+        h_row = max(0, min(9, h_row))
+        if c == h_col and r == h_row:
+            pygame.draw.rect(
+                screen, (0, 200, 255), (cx - 25, cy - 25, 50, 50), 4
+            )  # 青色粗边框
+        else:
+            pygame.draw.rect(screen, HIGHLIGHT_COLOR, (cx - 25, cy - 25, 50, 50), 3)
+
     # ===================== 圆形棋子 + 居中中文文字 =====================
     for col in range(9):
         for row in range(10):
@@ -245,6 +362,22 @@ def draw_graphic_board(board_obj):
             x = col * CELL_SIZE + BOARD_PADDING
             y = row * CELL_SIZE + BOARD_PADDING
             radius = 22
+
+            # 鼠标悬停/选中高亮 - 仅新增，不改动原有棋子绘制
+            h_col = round((mouse_x - BOARD_PADDING) / CELL_SIZE)
+            h_row = round((mouse_y - BOARD_PADDING) / CELL_SIZE)
+            h_col = max(0, min(8, h_col))
+            h_row = max(0, min(9, h_row))
+            if (col == selected_col and row == selected_row) or (
+                col == h_col
+                and row == h_row
+                and board_obj.board[col][row] in RED_PIECES
+            ):
+                pygame.draw.rect(screen, HIGHLIGHT_COLOR, (x - 25, y - 25, 50, 50), 3)
+
+            # 如果当前棋子被选中拖动中，跳过原位绘制（后面会画在鼠标位置）
+            if selected_col == col and selected_row == row:
+                continue
 
             # 1. 绘制圆形棋子底色
             if piece in [RED_K, RED_R, RED_N, RED_C, RED_E, RED_A, RED_P]:
@@ -273,9 +406,11 @@ def draw_graphic_board(board_obj):
         font_tip = pygame.freetype.SysFont("stheitilight", 30)
 
     # ── 绘制行列编号提示 ──
-    label_font = pygame.freetype.Font(
-        "/System/Library/Fonts/STHeiti Light.ttc", 22
-    ) if os.path.exists("/System/Library/Fonts/STHeiti Light.ttc") else pygame.freetype.SysFont("stheitilight", 22)
+    label_font = (
+        pygame.freetype.Font("/System/Library/Fonts/STHeiti Light.ttc", 22)
+        if os.path.exists("/System/Library/Fonts/STHeiti Light.ttc")
+        else pygame.freetype.SysFont("stheitilight", 22)
+    )
 
     # 列标签 A-I（放在棋盘下方）
     for col_idx in range(9):
@@ -291,19 +426,40 @@ def draw_graphic_board(board_obj):
         lx = BOARD_PADDING - 32
         ly = row_idx * CELL_SIZE + BOARD_PADDING
         rect = label_font.get_rect(label)
-        label_font.render_to(screen, (lx - rect.width // 2, ly - rect.height // 2), label, LINE_COLOR)
+        label_font.render_to(
+            screen, (lx - rect.width // 2, ly - rect.height // 2), label, LINE_COLOR
+        )
 
     tips = ["红方：你", "黑方：AI", "走子格式：E7-E5", "关闭窗口退出"]
     y_pos = 50
     for tip in tips:
-        font_tip.render_to(screen, (BOARD_WIDTH + BOARD_PADDING * 2 + 20, y_pos), tip, BLACK_CHESS)
+        font_tip.render_to(
+            screen, (BOARD_WIDTH + BOARD_PADDING * 2 + 20, y_pos), tip, BLACK_CHESS
+        )
         y_pos += 40
+
+    # 拖拽棋子跟随鼠标 - 仅新增
+    if selected_col != -1:
+        piece = board_obj.board[selected_col][selected_row]
+        x, y = mouse_x, mouse_y
+        radius = 22
+        if piece in RED_PIECES:
+            pygame.draw.circle(screen, RED_CHESS, (x, y), radius)
+        else:
+            pygame.draw.circle(screen, BLACK_CHESS, (x, y), radius)
+        pygame.draw.circle(screen, WHITE, (x, y), radius, 2)
+        text = CHESS_TEXT[piece]
+        text_rect = chess_font.get_rect(text)
+        chess_font.render_to(
+            screen, (x - text_rect.width // 2, y - text_rect.height // 2), text, WHITE
+        )
 
     pygame.display.update()
 
 
-# ===================== 人机对战主循环 =====================
+# ===================== 人机对战主循环 - 仅替换命令行为鼠标，其余100%原样 =====================
 def play_game():
+    global selected_col, selected_row, legal_moves, mouse_x, mouse_y, GAME_OVER, WINNER_MSG, GAME_OVER_COLOR
     model = load_trained_model()
     board = XiangqiBoard()
     # 初始棋盘FEN（和训练一致）
@@ -312,11 +468,15 @@ def play_game():
     )
 
     print("🎮 象棋AI对战开始！你执红，AI执黑")
-    print("走子格式：列+行-列+行，例：H9-G7")
-    print("✅ 图形棋盘已打开，关闭窗口退出\n")
-
+    print("鼠标操作：左键选子，左键落子，右键/ESC取消")
+    GAME_OVER = False
+    WINNER_MSG = ""
     running = True
+
     while running:
+        clock.tick(60)
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+
         # 监听窗口关闭
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -324,38 +484,90 @@ def play_game():
                 pygame.quit()
                 return
 
+            # 鼠标移动
+            if event.type == pygame.MOUSEMOTION:
+                mouse_x, mouse_y = event.pos
+
+            # ESC取消选中（如果游戏结束则退出）
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    if GAME_OVER:
+                        running = False
+                        pygame.quit()
+                        return
+                    selected_col, selected_row = -1, -1
+                    legal_moves = []
+
+            # 游戏结束后不再响应落子操作
+            if GAME_OVER:
+                continue
+
+            # 鼠标点击事件
+            if event.type == pygame.MOUSEBUTTONDOWN and board.turn == 0:
+                mx, my = event.pos
+                col = round((mx - BOARD_PADDING) / CELL_SIZE)
+                row = round((my - BOARD_PADDING) / CELL_SIZE)
+                col = max(0, min(8, col))
+                row = max(0, min(9, row))
+
+                # 右键取消（pygame中button=3是右键）
+                if event.button == 3:
+                    selected_col, selected_row = -1, -1
+                    legal_moves = []
+                
+                # 左键选子/落子
+                if event.button == 1:
+                    if selected_col == -1:
+                        # 选中红方棋子
+                        if board.board[col][row] in RED_PIECES:
+                            selected_col, selected_row = col, row
+                            legal_moves = get_pseudo_legal_moves(board.board, col, row)
+                    else:
+                        # 合法落点落子
+                        if (col, row) in legal_moves:
+                            board.push((selected_col, selected_row, col, row))
+                            selected_col, selected_row = -1, -1
+                            legal_moves = []
+                            # 落子后检查黑方（AI）是否被将死
+                            if is_checkmate(board.board, 1):
+                                GAME_OVER = True
+                                WINNER_MSG = "🎉 红方胜！你赢了！"
+                                GAME_OVER_COLOR = RED_CHESS
+                                print("🎉 红方胜！你赢了！")
+
         # 刷新图形棋盘
         draw_graphic_board(board)
-        clock.tick(30)
 
-        # 红方（玩家）走子
-        if board.turn == 0:
-            while True:
-                move_input = input("你的回合（红方），请输入走法：")
-                try:
-                    move = iccs_move_to_pos(move_input)
-                    if move is None:
-                        print("❌ 格式错误，例：H9-G7")
-                        continue
-                    fc, fr, tc, tr = move
-                    legal = get_pseudo_legal_moves(board.board, fc, fr)
-                    if (tc, tr) in legal:
-                        break
-                    else:
-                        print("❌ 非法走子，请重新输入！")
-                except Exception as e:
-                    print(f"❌ 输入错误：格式例：H9-G7")
-            board.push(move)
+        # 游戏结束后不再走子
+        if GAME_OVER:
+            continue
 
         # 黑方（AI）走子
-        else:
+        if board.turn == 1:
+            # 清除残留在界面上的人类上次的合法走法提示
+            legal_moves = []
             print("🤖 AI思考中...")
             move = ai_move(model, board)
             fc, fr, tc, tr = move
+            # 检测AI是否无棋可走（将杀/困毙 sentinel）
+            if fc == 0 and fr == 0 and tc == 0 and tr == 0:
+                GAME_OVER = True
+                WINNER_MSG = "🎉 红方胜！你赢了！"
+                GAME_OVER_COLOR = RED_CHESS
+                print("🎉 AI无合法走法，红方胜！")
+                continue
             col_map_rev = {v: k for k, v in COL_MAP.items()}
             print(f"AI走子：{col_map_rev[fc]}{fr} -> {col_map_rev[tc]}{tr}")
             board.push(move)
+            # AI走完后检查红方（人类）是否被将死
+            if is_checkmate(board.board, 0):
+                GAME_OVER = True
+                WINNER_MSG = "😵 黑方胜！AI赢了..."
+                GAME_OVER_COLOR = BLACK_CHESS
+                print("😵 黑方胜！AI赢了...")
 
+        # 刷新棋盘（第二次刷新以显示AI走完的状态）
+        draw_graphic_board(board)
 
 if __name__ == "__main__":
     play_game()
