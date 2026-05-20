@@ -1,4 +1,5 @@
 # project special
+.DS_Store
 *.pgns
 *.pt
 

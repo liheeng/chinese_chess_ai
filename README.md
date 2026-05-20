@@ -1,23 +1,33 @@
-# chinese_chess_ai
-Learn how to use AI to train/play chinese chess
+# Chinese chess model train
 
+* Learn how to use AI to train/play chinese chess, use CNN and Transformer to train.
+* Use doubao AI, chatgpt AI and deepseek AI to help writting code and solve problem.
 
-# 训练数据集
+# AI model score/evaluation
 
-* 推荐 1：CGLemon/chinese-chess-PGN（GitHub，9.9 万局，ICCS 格式）
+* Doubao is good for simple requirements and simple code.
+* Chatgpt is good at framework and design.
+* Deepseek V4 is good at checking and analyzing code and local implementations.
+
+# Training data
+
+* Option 1：CGLemon/chinese-chess-PGN（GitHub，99k chess games，ICCS format）
 https://github.com/CGLemon/chinese-chess-PGN
-直接下载：点绿色 “Code”→Download ZIP
-格式：.pgn / .iccs，可直接解析
+Download directly: click on green “Code”→Download ZIP
+Format: .pgn / .iccs，parse by code directly
 
-* 推荐 2：ModelScope 象棋数据集（2000 万局，SQLite）
+* Option 2：ModelScope (20000k chess games，SQLite）
 https://www.modelscope.cn/datasets/nowcan/xiangqi_train_data
-免费下载，适合大规模训练
+free to download, fit for bigger scope training
 
-# 安装 Python 3.10.11～3.10.15 任意一个小版本
-官网直下：https://www.python.org/downloads/release/python-31011/
-或者用 conda安装
+# Python verion
 
-# 依赖库
+* Install any version of Python between 3.10.11～3.10.15
+
+Download from：https://www.python.org/downloads/release/python-31011/
+or use conda to install
+
+# Dependent python libraries
 
 ``` bash
 pip install -r requirements.txt

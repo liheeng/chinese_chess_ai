@@ -35,6 +35,11 @@ from torch.utils.data import Dataset, DataLoader
 
 torch.mps.empty_cache()  # 清空MPS缓存
 
+# 👇 仅加这三行，专治MPS卡顿，不动任何训练参数
+os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+torch.set_float32_matmul_precision("medium")
+
 # 文件路径
 file_name = os.path.splitext(os.path.basename(__file__))[0]
 BASE_DIR = "./data"
